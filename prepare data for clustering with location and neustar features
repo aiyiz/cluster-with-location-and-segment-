@@ -1,0 +1,159 @@
+---------------------------------diabetes data ----------------------------------------------
+--number of devices that clicked on diabetes campaign ad data in Q1: 
+select count(distinct c.device_id_hashed)
+from etl.public.transactions c
+where c.event_type in ('CLICK', 'EXPAND')
+      and c.campaign_id in (1196,5082,1192,1207,2216,3346,12018,2788,1793,1859,10350,1163,9520,3436,2971,5443,5276,4444,11086,4814,1457,2608,2756,2164,3340,2027,5707,5949,2224,4752,4341,3212,7051,1944,2963,3329,3439,4012,3420,4225,4128,4683,4099,4648,4220)
+      and c.timestamp>='2018-01-01' and timestamp<='2018-03-01'
+      and c.device_id_hashed not in (select device_id_hashed from development.hcp_lookup.hcps_past_year)
+; 
+
+---devices that clicked on diabetes campaigns in time period that are not HCPs 404,378
+create table ds.diabetes1203.diab_seg_temp_all as
+select distinct c.device_id_hashed, d.segment_id
+from etl.public.transactions c
+    join development.public._v3_device_segment_clustered d
+        on c.device_id_hashed=d.device_id_hashed
+        and c.event_type in ('CLICK', 'EXPAND')
+        and c.campaign_id in (1196,5082,1192,1207,2216,3346,12018,2788,1793,1859,10350,1163,9520,3436,2971,5443,5276,4444,11086,4814,1457,2608,2756,2164,3340,2027,5707,5949,2224,4752,4341,3212,7051,1944,2963,3329,3439,4012,3420,4225,4128,4683,4099,4648,4220)
+        and c.timestamp>='2018-01-01' and timestamp<='2018-03-01'
+        and c.device_id_hashed not in (select device_id_hashed from development.hcp_lookup.hcps_past_year)
+;
+
+
+select count (distinct device_id_hashed) from ds.diabetes1203.diab_seg_temp_all
+----------------------location ---------------------------------------------------------
+--devices that visited fast food restaurants, coffee 
+create table ds.diabetes1203.location_visit1_all as
+select distinct c.device_id_hashed, category_new, segment_name_new, txn, timestamp 
+from ds.public.transaction_with_location_v3_minhav_unique a
+join ds.diabetes1203.diab_seg_temp_all c
+    on c.device_id_hashed=a.device_id_hashed
+join ds.public.location_seg_taxonomies0 d
+    on d.segment_name_new = a.category_name
+where (segment_id_new<1000 or segment_name_new in ('COFFEE', 'GYMS', 'FAST FOOD RESTAURANTS')) and
+timestamp>='2018-01-01';
+--108,358 unique devices 
+
+
+--devices that have been to above location at least twice in 2018
+create table ds.diabetes1203.location_visit2_all as
+select device_id_hashed, segment_name_new, number
+from
+(select device_id_hashed, segment_name_new, count(txn) number
+from ds.diabetes1203.location_visit1_all 
+group by device_id_hashed, segment_name_new
+)
+where number>=2; 
+--83,404
+
+
+
+--device ID with segment id new for location data 
+create table ds.diabetes1203.location_visit3_all as 
+select distinct device_id_hashed, segment_id_new as segment_id
+from ds.diabetes1203.location_visit2_all a
+    join ds.public.location_seg_taxonomies0 b
+        on a.segment_name_new = b.segment_name_new ;
+
+-----------------------------------------------------------------------------------------------------------------------------------
+---------------------------------put cleaned segment info and location info together ------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------
+--insert diab segment into location table 
+create table ds.diabetes1203.diab_seg_temp1_all clone ds.diabetes1203.diab_seg_temp_all;
+insert into ds.diabetes1203.diab_seg_temp1_all
+select * from ds.diabetes1203.location_visit3_all;
+
+
+create table ds.diabetes1203.diab_seg_temp2_all as
+select* from ds.diabetes1203.diab_seg_temp1_all 
+where device_id_hashed in (select a.device_id_hashed
+from ds.diabetes1203.diab_seg_temp_all a
+join ds.diabetes1203.location_visit3_all b
+on a.device_id_hashed=b.device_id_hashed);
+--83,404
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------------------------- create dataset for clustering ------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------------------------
+-------create device id to new seg id (which include location) dataset for clustering 
+create table ds.diabetes1203.diab_seg_temp_new_id_all as 
+select distinct a.device_id_hashed, b.segment_id_new 
+from ds.diabetes1203.diab_seg_temp2_all a
+join ds.public.segment_location_id_ref0 b
+on a.segment_id=b.segment_id;
+--83404
+
+select * from ds.public.location_seg_taxonomies0 
+where Category_new not in 
+('Active Movie Goer',
+'Attitudes: NA',
+'Auto Vehicles in HH',
+'Demographics: Employment Industry',
+'Demographics: Employment Status',
+'Demographics: Individual- Gender',
+'Demographics: Presence of Children',
+'Demographics: Higher Education Segments',
+'Demographics: Marital Status',
+ 'Education',
+'Grocery',
+'Home Value',
+'Household Products: Recycling',
+'Media Usage',
+'Media: App Category usage',
+'Niche Industry Segments: NA',
+'OTC Product',
+'Outlook: NA',
+'Personal Finance: Health Insurance',
+'Pet Food and Supplies',
+'Pet Ownership',
+'Purchaser',
+'Retail',
+'Shopping: Coupons Reason',
+'Shopping: Coupons Used',
+'Spectator',
+'TV Viewing',
+'Travel: Travel Frequency',
+'Vacation Activities')
+and category_new not ilike '%restaurants%'
+
+
+create table ds.diabetes1203.diab_seg_temp_new_id_all2 as 
+select distinct a.device_id_hashed, b.segment_id_new 
+from ds.diabetes1203.diab_seg_temp2_all a
+join ds.public.segment_location_id_ref0 b
+    on a.segment_id=b.segment_id
+join ds.public.location_seg_taxonomies0 c
+    on c.segment_id_new = b.segment_id_new
+where Category_new not in 
+('Active Movie Goer',
+'Attitudes: NA',
+'Auto Vehicles in HH',
+'Demographics: Employment Industry',
+'Demographics: Employment Status',
+'Demographics: Individual- Gender',
+'Demographics: Presence of Children',
+'Demographics: Higher Education Segments',
+'Demographics: Marital Status',
+ 'Education',
+'Grocery',
+'Home Value',
+'Household Products: Recycling',
+'Media Usage',
+'Media: App Category usage',
+'Niche Industry Segments: NA',
+'OTC Product',
+'Outlook: NA',
+'Personal Finance: Health Insurance',
+'Pet Food and Supplies',
+'Pet Ownership',
+'Purchaser',
+'Retail',
+'Shopping: Coupons Reason',
+'Shopping: Coupons Used',
+'Spectator',
+'TV Viewing',
+'Travel: Travel Frequency',
+'Vacation Activities')
+and category_new not ilike '%restaurants%'
